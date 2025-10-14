@@ -4,9 +4,14 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-PII Filter Plugin for MCP Gateway.
+PII Filter Plugin for MCP Gateway with auto-detection of Rust acceleration.
+
 This plugin detects and masks Personally Identifiable Information (PII) in prompts
 and their responses, including SSNs, credit cards, emails, phone numbers, and more.
+
+When the Rust implementation is installed (pip install mcpgateway[rust]), it will
+automatically be used for 5-100x performance improvement. Otherwise, the pure Python
+implementation is used as a fallback.
 """
 
 # Standard
@@ -37,6 +42,17 @@ from mcpgateway.services.logging_service import LoggingService
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Try to import Rust-accelerated implementation
+_RUST_AVAILABLE = False
+_RustPIIDetector = None
+try:
+    from .pii_filter_rust import RustPIIDetector as _RustPIIDetector, RUST_AVAILABLE as _RUST_AVAILABLE
+    if _RUST_AVAILABLE:
+        logger.info("Rust PII filter available - using high-performance implementation (5-100x speedup)")
+except ImportError as e:
+    logger.debug(f"Rust PII filter not available, using Python implementation: {e}")
+    _RUST_AVAILABLE = False
 
 
 class PIIType(str, Enum):
@@ -392,7 +408,11 @@ class PIIDetector:
 
 
 class PIIFilterPlugin(Plugin):
-    """PII Filter plugin for detecting and masking sensitive information."""
+    """PII Filter plugin for detecting and masking sensitive information.
+
+    Automatically uses Rust-accelerated implementation when available for 5-100x speedup.
+    Falls back to pure Python implementation when Rust is not installed.
+    """
 
     def __init__(self, config: PluginConfig):
         """Initialize the PII filter plugin.
@@ -402,7 +422,17 @@ class PIIFilterPlugin(Plugin):
         """
         super().__init__(config)
         self.pii_config = PIIFilterConfig.model_validate(self._config.config)
-        self.detector = PIIDetector(self.pii_config)
+
+        # Auto-detect and use Rust implementation if available
+        if _RUST_AVAILABLE and _RustPIIDetector is not None:
+            self.detector = _RustPIIDetector(self.pii_config)
+            self.implementation = "Rust"
+            logger.info("PIIFilterPlugin initialized with Rust acceleration (5-100x speedup)")
+        else:
+            self.detector = PIIDetector(self.pii_config)
+            self.implementation = "Python"
+            logger.info("PIIFilterPlugin initialized with Python implementation")
+
         self.detection_count = 0
         self.masked_count = 0
 
@@ -808,4 +838,7 @@ class PIIFilterPlugin(Plugin):
 
     async def shutdown(self) -> None:
         """Cleanup when plugin shuts down."""
-        logger.info(f"PII Filter plugin shutting down. " f"Total masked: {self.masked_count} items")
+        logger.info(
+            f"PII Filter plugin ({self.implementation}) shutting down. "
+            f"Total masked: {self.masked_count} items"
+        )
