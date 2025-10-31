@@ -14,37 +14,22 @@ plugins:
         tenant_ids: []  # Apply to all tenants
     config:
       policy_lang: cedar # custom_dsl
-      policy: |
-          - id: allow-admin-agents
-            effect: Permit
-            principal: Role::"admin"
-            action:
-              - Action::"customer_service"
-              - Action::"approval"
-            resource: Resource::"agents"
+      policy: 
+        - id: allow-admin-tools
+          effect: Permit
+          principal: Role::"admin"
+          action:
+            - Action::"get_users"
+            - Action::"submit_request"
+          resource: Resource::"tools"
 
-          - id: allow-admin-tools
-            effect: Permit
-            principal: Role::"admin"
-            action:
-              - Action::"get_users"
-              - Action::"submit_request"
-            resource: Resource::"tools"
-
-          - id: allow-users-agents
-            effect: Permit
-            principal: Role::"users"
-            action:
-              - Action::"customer_service"
-            resource: Resource::"agents"
-
-          - id: allow-users-tools
-            effect: Permit
-            principal: Role::"users"
-            action:
-              - Action::"get_users"
-              - Action::"submit_request"
-            resource: Resource::"tools"
+        - id: allow-users-tools
+          effect: Permit
+          principal: Role::"users"
+          action:
+            - Action::"get_users"
+            - Action::"submit_request"
+          resource: Resource::"tools"
 
 # Plugin directories to scan
 plugin_dirs:
