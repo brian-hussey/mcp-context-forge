@@ -70,19 +70,26 @@ def _make_object_json(target_kb: int, repairable: bool, seed: int = 0) -> str:
     """Create deterministic object-like JSON-ish text around target size."""
     parts = []
     idx = 0
-    while len(",".join(parts)) < target_kb * 1024:
+    current_len = 0
+    target_len = target_kb * 1024
+
+    while current_len < target_len:
         key = f"k{seed}_{idx}"
         if repairable:
-            parts.append(f"'{key}': 'value_{seed}_{idx}'")
+            part = f"'{key}': 'value_{seed}_{idx}'"
         else:
-            parts.append(f'"{key}": "value_{seed}_{idx}"')
+            part = f'"{key}": "value_{seed}_{idx}"'
+
+        # Add comma length if not first part
+        comma_len = 1 if parts else 0
+        current_len += len(part) + comma_len
+        parts.append(part)
         idx += 1
 
     body = ",".join(parts)
     if repairable:
         return "{" + body + ",}"
     return "{" + body + "}"
-
 
 def _build_payload_variants(target_kb: int, repairable: bool, variants: int) -> list[str]:
     """Create multiple payload variants with distinct keys to reduce parser key-cache effects."""
@@ -113,16 +120,29 @@ def generate_scenarios(payload_variants: int) -> list[Scenario]:
     ]
 
 
+def _inject_iteration_key(payload: str, iteration: int) -> str:
+    """Inject a unique iteration key into the payload to reduce parser key-cache effects."""
+    # Insert a unique key at the start of the JSON object to vary the payload each iteration
+    iteration_key = f'"_iteration_{iteration}":{iteration},'
+    # Find the first '{' and insert the key after it
+    first_brace = payload.find('{')
+    if first_brace == -1:
+        return payload
+    return payload[: first_brace + 1] + iteration_key + payload[first_brace + 1 :]
+
+
 def benchmark_python(payloads: list[str], iterations: int, warmup: int) -> tuple[list[float], str | None]:
     """Benchmark Python repair function."""
     for i in range(warmup):
         payload = payloads[i % len(payloads)]
+        payload = _inject_iteration_key(payload, i)
         PY_IMPL._repair(payload)
 
     times: list[float] = []
     output: str | None = None
     for i in range(iterations):
         payload = payloads[i % len(payloads)]
+        payload = _inject_iteration_key(payload, i)
         start = time.perf_counter()
         output = PY_IMPL._repair(payload)
         times.append(time.perf_counter() - start)
@@ -133,12 +153,14 @@ def benchmark_rust(payloads: list[str], iterations: int, warmup: int, rust_repai
     """Benchmark Rust repair function."""
     for i in range(warmup):
         payload = payloads[i % len(payloads)]
+        payload = _inject_iteration_key(payload, i)
         rust_repair(payload)
 
     times: list[float] = []
     output: str | None = None
     for i in range(iterations):
         payload = payloads[i % len(payloads)]
+        payload = _inject_iteration_key(payload, i)
         start = time.perf_counter()
         output = rust_repair(payload)
         times.append(time.perf_counter() - start)
