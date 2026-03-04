@@ -1,5 +1,5 @@
 # ContextForge
-Innocuous change + 2
+Innocuous change + 3
 > An open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. Optimizes Agent & Tool calling, and supports plugins.
 
 ![ContextForge Banner](docs/docs/images/contextforge-logo_horizontal_black.png)
