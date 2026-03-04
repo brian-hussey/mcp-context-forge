@@ -13,12 +13,14 @@ Enhanced with additional test cases for better coverage.
 # Standard
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from uuid import UUID, uuid4
 
 # Third-Party
-from fastapi import HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.testclient import TestClient
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
@@ -247,6 +249,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
+from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.schemas import (
     GatewayTestRequest,
@@ -473,6 +476,39 @@ class TestAdminServerRoutes:
         with pytest.raises(RuntimeError) as excinfo:
             await admin_get_server("error-id", mock_db, user={"email": "test-user", "db": mock_db})
         assert "Database connection lost" in str(excinfo.value)
+
+    def test_admin_add_server_form_submit_with_logging_enabled_does_not_stream_consume(self):
+        """Regression: admin-like form posts should remain readable with request logging enabled."""
+        app = FastAPI()
+        app.add_middleware(
+            RequestLoggingMiddleware,
+            enable_gateway_logging=False,
+            log_detailed_requests=True,
+            max_body_size=1024 * 1024,
+        )
+
+        @app.post("/admin/servers")
+        async def admin_servers_endpoint(request: Request):
+            form = await request.form()
+            associated_tools = form.getlist("associatedTools")
+            if form.get("selectAllTools") == "true":
+                associated_tools = json.loads(str(form.get("allToolIds", "[]")))
+            return {"name": form.get("name"), "tool_count": len(associated_tools)}
+
+        client = TestClient(app)
+        response = client.post(
+            "/admin/servers",
+            data={
+                "name": "srv-1",
+                "visibility": "private",
+                "associatedTools": ["1", "2", "3"],
+                "selectAllTools": "true",
+                "allToolIds": "[\"1\",\"2\",\"3\"]",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"name": "srv-1", "tool_count": 3}
 
     @patch.object(ServerService, "register_server")
     async def test_admin_add_server_with_validation_error(self, mock_register_server, mock_request, mock_db):
@@ -16012,6 +16048,17 @@ class TestTemplateButtonGating:
             return html.unescape(value)
 
         env.filters["decode_html"] = decode_html_entities
+
+        # Register tojson_attr filter (same as in main.py) for inline event handler escaping
+        def tojson_attr(value: object) -> str:
+            """JSON-encode a value for safe use inside double-quoted HTML attributes."""
+            import json as _json
+
+            s = _json.dumps(value)
+            s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
+            return s
+
+        env.filters["tojson_attr"] = tojson_attr
         return env
 
     def _render_tools_partial(self, jinja_env, tool_data, current_user_email, is_admin=False, user_team_roles=None):
@@ -16240,11 +16287,13 @@ class TestTemplateButtonGating:
         assert r"\u003c" in decoded_html
 
     def test_admin_js_toggle_submit_injects_csrf_token(self):
-        """Form submit helpers should inject CSRF token before programmatic submit()."""
+        """handleToggleSubmit should inject CSRF token into the FormData before fetch()."""
         admin_js_path = settings.static_dir / "admin.js"
         admin_js = admin_js_path.read_text(encoding="utf-8")
-        assert "function injectCsrfTokenIntoForm(form)" in admin_js
-        assert "injectCsrfTokenIntoForm(form);" in admin_js
+        # handleToggleSubmit uses fetch() and injects the CSRF token directly
+        # into FormData via getCookie rather than via the old DOM helper.
+        assert 'getCookie("mcpgateway_csrf_token")' in admin_js
+        assert 'formData.set("csrf_token", csrfToken)' in admin_js
 
     def test_admin_modal_backdrops_disable_pointer_events(self):
         """Modal backdrop wrappers should not block interactions with modal buttons."""
@@ -18127,6 +18176,94 @@ class TestPaginationVariableCascade:
         assert values["TOOLS_TOTAL_PAGES"] == 1
         assert values["GATEWAYS_TOTAL_ITEMS"] == 150
         assert values["GATEWAYS_TOTAL_PAGES"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Pagination outerHTML swap style for table-targeted partials (#3396)
+# ---------------------------------------------------------------------------
+
+
+class TestPaginationSwapStyle:
+    """Verify table-targeted partials set swapStyle to outerHTML (#3396).
+
+    When pagination_controls.html is included in an OOB block that targets a
+    ``<table>`` element, the Alpine.js ``swapStyle`` must be ``outerHTML``.
+    Using ``innerHTML`` on a ``<table>`` whose HTMX response starts with
+    ``<table>`` produces invalid nested HTML, leaving the visible table empty.
+    """
+
+    @staticmethod
+    def _render_pagination_controls(hx_swap=None):
+        """Render pagination_controls.html with the given hx_swap value."""
+        # Third-Party
+        from jinja2 import Environment, FileSystemLoader
+
+        templates_dir = str(Path(__file__).resolve().parents[3] / "mcpgateway" / "templates")
+        env = Environment(loader=FileSystemLoader(templates_dir))
+        template = env.get_template("pagination_controls.html")
+        ctx = {
+            "pagination": {
+                "page": 1,
+                "per_page": 50,
+                "total_items": 75,
+                "total_pages": 2,
+                "has_next": True,
+                "has_prev": False,
+            },
+            "base_url": "/admin/tools/partial",
+            "hx_target": "#tools-table",
+            "hx_indicator": "#tools-loading",
+            "table_name": "tools",
+        }
+        if hx_swap is not None:
+            ctx["hx_swap"] = hx_swap
+        return template.render(**ctx)
+
+    def test_default_swap_is_innerhtml(self):
+        """Without hx_swap set, swapStyle defaults to innerHTML."""
+        html = self._render_pagination_controls()
+        assert "swapStyle: 'innerHTML'" in html
+
+    def test_outerhtml_swap_when_set(self):
+        """When hx_swap='outerHTML', swapStyle is outerHTML."""
+        html = self._render_pagination_controls(hx_swap="outerHTML")
+        assert "swapStyle: 'outerHTML'" in html
+
+    @pytest.mark.parametrize(
+        "partial_template",
+        [
+            "tools_partial.html",
+            "servers_partial.html",
+            "gateways_partial.html",
+            "prompts_partial.html",
+            "resources_partial.html",
+            "agents_partial.html",
+            "metrics_top_performers_partial.html",
+        ],
+    )
+    def test_table_partial_sets_outerhtml_swap(self, partial_template):
+        """All table-targeted partial templates must set hx_swap='outerHTML' before including pagination_controls.html.
+
+        This prevents the innerHTML-on-table nesting bug where htmx.ajax
+        inserts a ``<table>`` response inside an existing ``<table>``.
+        """
+        import re
+
+        templates_dir = Path(__file__).resolve().parents[3] / "mcpgateway" / "templates"
+        source = (templates_dir / partial_template).read_text()
+
+        # Find all OOB pagination blocks: a div with hx-swap-oob that includes pagination_controls
+        oob_blocks = re.findall(
+            r'<div\s+id="[^"]*pagination[^"]*"\s+hx-swap-oob="true">(.*?)(?:</div>)',
+            source,
+            re.DOTALL,
+        )
+        assert oob_blocks, f"{partial_template}: no OOB pagination block found"
+        for block in oob_blocks:
+            assert "{% set hx_swap = 'outerHTML' %}" in block, (
+                f"{partial_template}: OOB pagination block must set hx_swap='outerHTML'"
+            )
+            assert "{% include 'pagination_controls.html' %}" in block
 
 
 # ── ALLOW_PUBLIC_VISIBILITY guard tests ──────────────────────────────────────

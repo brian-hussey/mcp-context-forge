@@ -1547,7 +1547,7 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
             input.type = "radio";
             input.name = "visibility";
             input.value = val;
-            input.id = `edit-visibility-${val}`;
+            input.id = `edit-server-visibility-${val}`;
             if (val === "public") input.disabled = true;
             form.appendChild(input);
         });
@@ -1608,8 +1608,10 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
             // editServer may throw on missing DOM elements (modal etc.)
         }
 
-        const teamRadio = flagDoc.getElementById("edit-visibility-team");
-        const publicRadio = flagDoc.getElementById("edit-visibility-public");
+        const teamRadio = flagDoc.getElementById("edit-server-visibility-team");
+        const publicRadio = flagDoc.getElementById(
+            "edit-server-visibility-public",
+        );
         expect(teamRadio.checked).toBe(true);
         expect(publicRadio.checked).toBe(false);
     });
@@ -1630,8 +1632,12 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
         await flagWin.editServer("srv-2");
 
         // No team_id in URL → no coercion, public radio remains selected.
-        const privateRadio = flagDoc.getElementById("edit-visibility-private");
-        const publicRadio = flagDoc.getElementById("edit-visibility-public");
+        const privateRadio = flagDoc.getElementById(
+            "edit-server-visibility-private",
+        );
+        const publicRadio = flagDoc.getElementById(
+            "edit-server-visibility-public",
+        );
         expect(publicRadio.checked).toBe(true);
         expect(privateRadio.checked).toBe(false);
     });
@@ -1651,8 +1657,255 @@ describe("editServer visibility coercion when ALLOW_PUBLIC_VISIBILITY is false",
 
         await flagWin.editServer("srv-3");
 
-        const teamRadio = flagDoc.getElementById("edit-visibility-team");
+        const teamRadio = flagDoc.getElementById("edit-server-visibility-team");
         expect(teamRadio.checked).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// editServer — OAuth settings restoration with camelCase properties (#3405)
+// ---------------------------------------------------------------------------
+describe("editServer restores OAuth settings from camelCase API response (#3405)", () => {
+    let oauthWin;
+    let oauthDoc;
+
+    beforeAll(() => {
+        oauthWin = loadAdminJs();
+        oauthDoc = oauthWin.document;
+    });
+
+    afterAll(() => {
+        cleanupAdminJs();
+    });
+
+    beforeEach(() => {
+        oauthDoc.body.textContent = "";
+        oauthWin.ROOT_PATH = "";
+    });
+
+    function buildEditServerOAuthDOM() {
+        const form = oauthDoc.createElement("form");
+        form.id = "edit-server-form";
+
+        // Visibility radios
+        ["public", "team", "private"].forEach((val) => {
+            const input = oauthDoc.createElement("input");
+            input.type = "radio";
+            input.name = "visibility";
+            input.value = val;
+            input.id = `edit-server-visibility-${val}`;
+            form.appendChild(input);
+        });
+
+        // OAuth enabled checkbox
+        const oauthCheckbox = oauthDoc.createElement("input");
+        oauthCheckbox.type = "checkbox";
+        oauthCheckbox.id = "edit-server-oauth-enabled";
+        form.appendChild(oauthCheckbox);
+
+        // OAuth config section
+        const oauthSection = oauthDoc.createElement("div");
+        oauthSection.id = "edit-server-oauth-config-section";
+        oauthSection.className = "hidden";
+        form.appendChild(oauthSection);
+
+        // OAuth authorization server field
+        const authServerInput = oauthDoc.createElement("input");
+        authServerInput.id = "edit-server-oauth-authorization-server";
+        form.appendChild(authServerInput);
+
+        // OAuth scopes field
+        const scopesInput = oauthDoc.createElement("input");
+        scopesInput.id = "edit-server-oauth-scopes";
+        form.appendChild(scopesInput);
+
+        // OAuth token endpoint field
+        const tokenEndpointInput = oauthDoc.createElement("input");
+        tokenEndpointInput.id = "edit-server-oauth-token-endpoint";
+        form.appendChild(tokenEndpointInput);
+
+        oauthDoc.body.appendChild(form);
+
+        // Server modal (openModal looks for this)
+        const modal = oauthDoc.createElement("div");
+        modal.id = "server-modal";
+        modal.className = "hidden";
+        oauthDoc.body.appendChild(modal);
+    }
+
+    function mockFetch(serverData) {
+        const makeResponse = () => ({
+            ok: true,
+            status: 200,
+            headers: { get: () => "application/json" },
+            json: () => Promise.resolve(serverData),
+            text: () => Promise.resolve(JSON.stringify(serverData)),
+            clone: makeResponse,
+        });
+        oauthWin.fetch = vi
+            .fn()
+            .mockImplementation(() => Promise.resolve(makeResponse()));
+    }
+
+    test("populates OAuth checkbox and config from camelCase response", async () => {
+        buildEditServerOAuthDOM();
+        mockFetch({
+            id: "srv-oauth",
+            name: "OAuthServer",
+            visibility: "team",
+            oauthEnabled: true,
+            oauthConfig: {
+                authorization_servers: ["https://idp.example.com"],
+                scopes_supported: ["openid", "profile"],
+                token_endpoint: "https://idp.example.com/token",
+            },
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-oauth");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        const checkbox = oauthDoc.getElementById("edit-server-oauth-enabled");
+        expect(checkbox.checked).toBe(true);
+
+        const section = oauthDoc.getElementById(
+            "edit-server-oauth-config-section",
+        );
+        expect(section.classList.contains("hidden")).toBe(false);
+
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("https://idp.example.com");
+
+        const scopes = oauthDoc.getElementById("edit-server-oauth-scopes");
+        expect(scopes.value).toBe("openid profile");
+
+        const tokenEndpoint = oauthDoc.getElementById(
+            "edit-server-oauth-token-endpoint",
+        );
+        expect(tokenEndpoint.value).toBe("https://idp.example.com/token");
+    });
+
+    test("hides OAuth config section when oauthEnabled is false", async () => {
+        buildEditServerOAuthDOM();
+        mockFetch({
+            id: "srv-no-oauth",
+            name: "NoOAuthServer",
+            visibility: "team",
+            oauthEnabled: false,
+            oauthConfig: null,
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-no-oauth");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        const checkbox = oauthDoc.getElementById("edit-server-oauth-enabled");
+        expect(checkbox.checked).toBe(false);
+
+        const section = oauthDoc.getElementById(
+            "edit-server-oauth-config-section",
+        );
+        expect(section.classList.contains("hidden")).toBe(true);
+
+        // Fields should be cleared
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("");
+
+        const scopes = oauthDoc.getElementById("edit-server-oauth-scopes");
+        expect(scopes.value).toBe("");
+
+        const tokenEndpoint = oauthDoc.getElementById(
+            "edit-server-oauth-token-endpoint",
+        );
+        expect(tokenEndpoint.value).toBe("");
+    });
+
+    test("handles authorization_server string fallback", async () => {
+        buildEditServerOAuthDOM();
+        mockFetch({
+            id: "srv-oauth-str",
+            name: "OAuthStringServer",
+            visibility: "team",
+            oauthEnabled: true,
+            oauthConfig: {
+                authorization_server: "https://auth.example.com",
+                scopes: ["read", "write"],
+            },
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-oauth-str");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("https://auth.example.com");
+
+        const scopes = oauthDoc.getElementById("edit-server-oauth-scopes");
+        expect(scopes.value).toBe("read write");
+    });
+
+    test("snake_case properties are NOT read (regression guard)", async () => {
+        buildEditServerOAuthDOM();
+        // Simulate a response with ONLY snake_case keys — these must NOT be picked up
+        mockFetch({
+            id: "srv-snake",
+            name: "SnakeCaseServer",
+            visibility: "team",
+            oauth_enabled: true,
+            oauth_config: {
+                authorization_servers: [
+                    "https://should-not-appear.example.com",
+                ],
+                scopes_supported: ["admin"],
+                token_endpoint: "https://should-not-appear.example.com/token",
+            },
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+        });
+
+        try {
+            await oauthWin.editServer("srv-snake");
+        } catch {
+            // editServer may throw on missing DOM elements beyond OAuth
+        }
+
+        // snake_case oauth_enabled is NOT read → checkbox stays unchecked
+        const checkbox = oauthDoc.getElementById("edit-server-oauth-enabled");
+        expect(checkbox.checked).toBe(false);
+
+        // OAuth config section stays hidden
+        const section = oauthDoc.getElementById(
+            "edit-server-oauth-config-section",
+        );
+        expect(section.classList.contains("hidden")).toBe(true);
+
+        // Fields remain empty because oauth_config (snake_case) is not read
+        const authServer = oauthDoc.getElementById(
+            "edit-server-oauth-authorization-server",
+        );
+        expect(authServer.value).toBe("");
     });
 });
 
@@ -1913,5 +2166,564 @@ describe("initToolSelect Select All populates in-memory store (#3257)", () => {
         expect(editSel.has("tool-a")).toBe(true);
         expect(editSel.has("tool-b")).toBe(true);
         expect(editSel.has("tool-c")).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// ensureNoResultsElement — dynamic "no results" message (#3314)
+// ---------------------------------------------------------------------------
+describe("ensureNoResultsElement", () => {
+    test("returns existing element when already in the DOM", () => {
+        const container = makeContainer("myContainer");
+        const msg = doc.createElement("p");
+        msg.id = "noMyMessage";
+        const span = doc.createElement("span");
+        span.id = "myQuerySpan";
+        msg.appendChild(span);
+        container.parentNode.insertBefore(msg, container.nextSibling);
+
+        const result = win.ensureNoResultsElement(
+            "myContainer",
+            "noMyMessage",
+            "myQuerySpan",
+            "item",
+        );
+
+        expect(result.msg).toBe(msg);
+        expect(result.span).toBe(span);
+    });
+
+    test("falls back to querySelector when span id is missing", () => {
+        const container = makeContainer("ctr2");
+        const msg = doc.createElement("p");
+        msg.id = "noMsg2";
+        const span = doc.createElement("span");
+        // No id on span — ensureNoResultsElement should find it via querySelector
+        msg.appendChild(span);
+        container.parentNode.insertBefore(msg, container.nextSibling);
+
+        const result = win.ensureNoResultsElement(
+            "ctr2",
+            "noMsg2",
+            "spanId2",
+            "widget",
+        );
+
+        expect(result.msg).toBe(msg);
+        expect(result.span).toBe(span);
+    });
+
+    test("creates element dynamically when missing from DOM", () => {
+        const container = makeContainer("dynContainer");
+
+        const result = win.ensureNoResultsElement(
+            "dynContainer",
+            "noDynMessage",
+            "dynQuerySpan",
+            "tool",
+        );
+
+        expect(result.msg).not.toBeNull();
+        expect(result.msg.id).toBe("noDynMessage");
+        expect(result.msg.style.display).toBe("none");
+        expect(result.msg.className).toBe(
+            "text-gray-700 dark:text-gray-300 mt-2",
+        );
+        expect(result.span).not.toBeNull();
+        expect(result.span.id).toBe("dynQuerySpan");
+        expect(result.msg.textContent).toContain("No tool found containing");
+        // Verify it's inserted after the container
+        expect(container.nextSibling).toBe(result.msg);
+    });
+
+    test("returns nulls when container does not exist", () => {
+        const result = win.ensureNoResultsElement(
+            "nonexistentContainer",
+            "noMsg",
+            "spanId",
+            "item",
+        );
+
+        expect(result.msg).toBeNull();
+        expect(result.span).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideToolSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideToolSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("associatedTools");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tools: [] },
+            }),
+        );
+
+        await win.serverSideToolSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noToolsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+        const span = doc.getElementById("searchQueryTools");
+        expect(span.textContent).toBe("zzzzz");
+    });
+
+    test("shows container and hides message when search returns results", async () => {
+        const container = makeContainer("associatedTools");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tools: [{ id: "t1", name: "Tool One" }] },
+            }),
+        );
+
+        await win.serverSideToolSearch("tool");
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+
+    test("resets container visibility at start of search after previous no-results", async () => {
+        const container = makeContainer("associatedTools");
+        container.style.display = "none"; // simulate previous no-results state
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: '<input type="checkbox" name="associatedTools" value="t1">',
+            }),
+        );
+
+        await win.serverSideToolSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSidePromptSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSidePromptSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initPromptSelect = vi.fn();
+        win.updatePromptMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("associatedPrompts");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { prompts: [] },
+            }),
+        );
+
+        await win.serverSidePromptSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noPromptsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("associatedPrompts");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSidePromptSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideResourceSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideResourceSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initResourceSelect = vi.fn();
+        win.updateResourceMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("associatedResources");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { resources: [] },
+            }),
+        );
+
+        await win.serverSideResourceSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noResourcesMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("associatedResources");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideResourceSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditToolSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditToolSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("edit-server-tools");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tools: [] },
+            }),
+        );
+
+        await win.serverSideEditToolSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noEditToolsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("edit-server-tools");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideEditToolSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditPromptsSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditPromptsSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initPromptSelect = vi.fn();
+        win.updatePromptMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("edit-server-prompts");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { prompts: [] },
+            }),
+        );
+
+        await win.serverSideEditPromptsSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noEditPromptsMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("edit-server-prompts");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideEditPromptsSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditResourcesSearch — container visibility on zero results (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditResourcesSearch — container visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initResourceSelect = vi.fn();
+        win.updateResourceMapping = vi.fn();
+    });
+
+    test("hides container and shows message when search returns zero results", async () => {
+        const container = makeContainer("edit-server-resources");
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { resources: [] },
+            }),
+        );
+
+        await win.serverSideEditResourcesSearch("zzzzz");
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noEditResourcesMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("resets container visibility on empty-string search", async () => {
+        const container = makeContainer("edit-server-resources");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "text/html",
+                body: "",
+            }),
+        );
+
+        await win.serverSideEditResourcesSearch("");
+
+        expect(container.style.display).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// initGatewaySelect — applySearch container visibility (#3314)
+// ---------------------------------------------------------------------------
+describe("initGatewaySelect — applySearch visibility (#3314)", () => {
+    function setupGatewaySelect(items = [], selectId = "associatedGateways") {
+        const container = doc.createElement("div");
+        container.id = selectId;
+        doc.body.appendChild(container);
+
+        items.forEach((text) => {
+            const item = doc.createElement("div");
+            item.className = "tool-item";
+            item.textContent = text;
+            const cb = doc.createElement("input");
+            cb.type = "checkbox";
+            cb.name = selectId;
+            cb.value = text;
+            item.appendChild(cb);
+            container.appendChild(item);
+        });
+
+        const pills = doc.createElement("div");
+        pills.id =
+            selectId === "associatedEditGateways"
+                ? "selectedEditGatewayPills"
+                : "selectedGatewayPills";
+        doc.body.appendChild(pills);
+
+        const warn = doc.createElement("div");
+        warn.id =
+            selectId === "associatedEditGateways"
+                ? "selectedEditGatewayWarning"
+                : "selectedGatewayWarning";
+        doc.body.appendChild(warn);
+
+        const searchInput = doc.createElement("input");
+        searchInput.id =
+            selectId === "associatedEditGateways"
+                ? "searchEditGateways"
+                : "searchGateways";
+        doc.body.appendChild(searchInput);
+
+        return { container, searchInput };
+    }
+
+    test("hides container and shows message when search matches nothing", () => {
+        const { container, searchInput } = setupGatewaySelect([
+            "fast_time",
+            "rest_a2a",
+        ]);
+
+        win.initGatewaySelect(
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
+            12,
+            null,
+            null,
+            "searchGateways",
+        );
+
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        expect(container.style.display).toBe("none");
+        const noMsg = doc.getElementById("noGatewayMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+    });
+
+    test("shows container and hides message when search matches items", () => {
+        const { container, searchInput } = setupGatewaySelect([
+            "fast_time",
+            "rest_a2a",
+        ]);
+
+        win.initGatewaySelect(
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
+            12,
+            null,
+            null,
+            "searchGateways",
+        );
+
+        // First trigger no-results to create the message element
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+        expect(container.style.display).toBe("none");
+
+        // Now search for something that matches
+        searchInput.value = "fast";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noGatewayMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+
+    test("uses Edit message IDs for edit container", () => {
+        const { searchInput } = setupGatewaySelect(
+            ["fast_time"],
+            "associatedEditGateways",
+        );
+
+        win.initGatewaySelect(
+            "associatedEditGateways",
+            "selectedEditGatewayPills",
+            "selectedEditGatewayWarning",
+            12,
+            null,
+            null,
+            "searchEditGateways",
+        );
+
+        searchInput.value = "zzzzz";
+        searchInput.dispatchEvent(new win.Event("input"));
+
+        const noMsg = doc.getElementById("noEditGatewayMessage");
+        expect(noMsg).not.toBeNull();
+        expect(noMsg.style.display).toBe("block");
+        // Add-modal message should NOT be created
+        expect(doc.getElementById("noGatewayMessage")).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideToolSearch — error catch keeps container visible (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideToolSearch — error catch visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("container stays visible and message hidden on fetch error", async () => {
+        const container = makeContainer("associatedTools");
+        container.style.display = "none"; // simulate previous no-results state
+
+        win.fetch = vi.fn().mockRejectedValue(new Error("Network failure"));
+
+        await win.serverSideToolSearch("test");
+
+        // Container should be visible (reset at top of function)
+        expect(container.style.display).toBe("");
+        // Message should be hidden in catch block
+        const noMsg = doc.getElementById("noToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// serverSideEditToolSearch — error catch keeps container visible (#3314)
+// ---------------------------------------------------------------------------
+describe("serverSideEditToolSearch — error catch visibility (#3314)", () => {
+    beforeEach(() => {
+        win.initToolSelect = vi.fn();
+        win.updateToolMapping = vi.fn();
+    });
+
+    test("container stays visible and message hidden on fetch error", async () => {
+        const container = makeContainer("edit-server-tools");
+        container.style.display = "none";
+
+        win.fetch = vi.fn().mockRejectedValue(new Error("Network failure"));
+
+        await win.serverSideEditToolSearch("test");
+
+        expect(container.style.display).toBe("");
+        const noMsg = doc.getElementById("noEditToolsMessage");
+        if (noMsg) {
+            expect(noMsg.style.display).toBe("none");
+        }
     });
 });
