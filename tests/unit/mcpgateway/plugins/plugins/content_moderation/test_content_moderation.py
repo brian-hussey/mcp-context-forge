@@ -22,7 +22,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPostInvokePayload,
 )
-from plugins.content_moderation.content_moderation import (
+from cpex_content_moderation.content_moderation import (
     ContentModerationPlugin,
     ModerationAction,
     ModerationProvider,
@@ -63,7 +63,7 @@ def _create_plugin(config_dict=None) -> ContentModerationPlugin:
     return ContentModerationPlugin(
         PluginConfig(
             name="content_moderation_test",
-            kind="plugins.content_moderation.content_moderation.ContentModerationPlugin",
+            kind="cpex_content_moderation.ContentModerationPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
             config=default_config,
         )
@@ -127,7 +127,7 @@ class TestContentModerationPlugin:
         assert "nested text" in texts
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch('cpex_content_moderation.content_moderation.httpx.AsyncClient')
     async def test_ibm_watson_moderation_success(self, mock_client_class):
         """Test successful IBM Watson moderation."""
         # Setup mock response
@@ -168,7 +168,7 @@ class TestContentModerationPlugin:
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch('cpex_content_moderation.content_moderation.httpx.AsyncClient')
     async def test_ibm_granite_moderation_harmful(self, mock_client_class):
         """Test IBM Granite Guardian flags harmful content (Yes response)."""
         mock_client = AsyncMock()
@@ -191,7 +191,7 @@ class TestContentModerationPlugin:
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch('cpex_content_moderation.content_moderation.httpx.AsyncClient')
     async def test_ibm_granite_moderation_safe(self, mock_client_class):
         """Test IBM Granite Guardian passes safe content (No response)."""
         mock_client = AsyncMock()
@@ -213,7 +213,7 @@ class TestContentModerationPlugin:
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch('cpex_content_moderation.content_moderation.httpx.AsyncClient')
     async def test_openai_moderation_success(self, mock_client_class):
         """Test successful OpenAI moderation."""
         mock_client = AsyncMock()
@@ -289,7 +289,7 @@ class TestContentModerationPlugin:
         plugin = _create_plugin()
 
         # Test BLOCK action
-        from plugins.content_moderation.content_moderation import ModerationResult
+        from cpex_content_moderation.content_moderation import ModerationResult
         block_result = ModerationResult(
             flagged=True,
             categories={"hate": 0.9},
@@ -529,7 +529,7 @@ class TestContentModerationPlugin:
             args={"query": "test content"}
         )
 
-        with patch('plugins.content_moderation.content_moderation.logger') as mock_logger:
+        with patch('cpex_content_moderation.content_moderation.logger') as mock_logger:
             await plugin.prompt_pre_fetch(payload, context)
 
             # Verify audit log was created
