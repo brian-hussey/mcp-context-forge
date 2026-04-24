@@ -5,22 +5,26 @@ import builtins
 import typing
 
 __all__ = [
+    "InvalidJsonError",
+    "JsonDepthError",
     "Validator",
-    "validate_json_data",
 ]
+
+class InvalidJsonError(ValueError): ...
+class JsonDepthError(ValueError): ...
 
 @typing.final
 class Validator:
     def __new__(
-        cls, max_param_length: builtins.int, dangerous_patterns: typing.Sequence[builtins.str], allowed_roots: typing.Sequence[builtins.str] = [], max_path_depth: builtins.int = 1024
+        cls,
+        max_param_length: builtins.int,
+        dangerous_patterns: typing.Sequence[builtins.str],
+        allowed_roots: typing.Sequence[builtins.str] = [],
+        max_path_depth: builtins.int = 1024,
+        max_json_depth: builtins.int = 1024,
     ) -> Validator: ...
     def validate_json_data(self, data: typing.Any) -> typing.Optional[tuple[builtins.str, builtins.str]]: ...
     def validate_json_bytes(self, raw_body: bytes) -> typing.Optional[tuple[builtins.str, builtins.str]]: ...
-    def validate_http_request(
-        self, parameters: typing.Sequence[tuple[builtins.str, builtins.str]], content_type: builtins.str, raw_body: bytes | None = None, skip_parameter_validation: builtins.bool = False
-    ) -> typing.Optional[tuple[builtins.str, builtins.str]]: ...
     def validate_parameters(self, parameters: typing.Sequence[tuple[builtins.str, builtins.str]]) -> typing.Optional[tuple[builtins.str, builtins.str]]: ...
     def validate_resource_path(self, path: builtins.str) -> builtins.str: ...
     def sanitize_response_body(self, body: bytes) -> bytes: ...
-
-def validate_json_data(data: typing.Any, max_param_length: builtins.int, dangerous_patterns: typing.Sequence[builtins.str]) -> typing.Optional[tuple[builtins.str, builtins.str]]: ...
