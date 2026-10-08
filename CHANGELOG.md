@@ -18,6 +18,8 @@
 
 - **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added named response models for `POST /v1/a2a/{agent_name}/invoke`, `POST /v1/a2a/invoke`, and `POST /v1/a2a/{agent_name}/jsonrpc`. The OpenAPI schema now exposes typed components while preserving the routes' passthrough behavior.
 
+- **Public A2A agent card lookup** ([#6700](https://github.com/IBM/mcp-context-forge/issues/6700)) - Added `GET /v1/a2a/{agent_id}/card`, gated on `a2a.read`. The route resolves a standalone A2A agent's card first, then falls back to a virtual server exposing an A2A interface. Previously the card was reachable only from the internal Rust-sidecar route.
+
 - **Federated completions** ([#6629](https://github.com/IBM/mcp-context-forge/issues/6629)) - Forward `completion/complete` to the owning upstream with request metadata. Both legacy and modern MCP connections remain supported through existing negotiation settings; forwarding has no modern-only gate.
 
 - **CSS linting moves from Stylelint to Biome** - `make lint-web` and the `lint-web` CI job now lint `mcpgateway/static/*.css` with Biome, configured in `biome.json`. The CI matrix entry is renamed from `stylelint` to `biome-css`. Stylelint and its configs leave the dev dependencies, which removes the `braces` advisory (GHSA-vfj7-8cjw-p6xm) from `npm audit`.
